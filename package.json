@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "lottie-animation-search": "./dist/index.js"
+    "lottie-animation-search": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -28,7 +28,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stanley-marketing/lottie-animation-search.git"
+    "url": "git+https://github.com/stanley-marketing/lottie-animation-search.git"
   },
   "publishConfig": {
     "access": "public"
