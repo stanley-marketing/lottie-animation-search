@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+
+# Compiled test files (vitest handles TS natively)
+tests/**/*.js
+tests/**/*.d.ts
