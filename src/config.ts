@@ -10,7 +10,7 @@ export const CONFIG = {
    * Server name - used for identification and metrics file naming.
    * The metrics file will be saved at: ~/.mcp-metrics/{serverName}.json
    */
-  serverName: "my-mcp-server",
+  serverName: "lottie-animation-search",
 
   /**
    * Server version - follows semver convention.

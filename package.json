@@ -1,11 +1,11 @@
 {
-  "name": "mcp-server-template",
+  "name": "@stanley-marketing/lottie-animation-search",
   "version": "1.0.0",
-  "description": "MCP Server Template - KISS & Modular",
+  "description": "MCP Server for searching and downloading free Lottie animations from LottieFiles",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mcp-server-template": "./dist/index.js"
+    "lottie-animation-search": "./dist/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -19,10 +19,20 @@
   },
   "keywords": [
     "mcp",
-    "template"
+    "lottie",
+    "lottiefiles",
+    "animation",
+    "model-context-protocol"
   ],
-  "author": "",
+  "author": "Stanley Marketing",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stanley-marketing/lottie-animation-search.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.24.3",
     "zod": "^4.1.13"

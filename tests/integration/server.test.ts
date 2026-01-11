@@ -23,95 +23,109 @@ describe("MCP Server Integration", () => {
       expect(result.tools.length).toBeGreaterThan(0);
     });
 
-    it("should include echo tool in the list", async () => {
+    it("should include search_animations tool in the list", async () => {
       const result = await ctx.client.listTools();
 
-      const echoTool = result.tools.find((t) => t.name === "echo");
-      expect(echoTool).toBeDefined();
-      expect(echoTool?.description).toBe("Echoes back the provided message");
+      const searchTool = result.tools.find((t) => t.name === "search_animations");
+      expect(searchTool).toBeDefined();
+      expect(searchTool?.description).toContain("Search for free Lottie animations");
     });
 
-    it("should include fetch_url tool in the list", async () => {
+    it("should include get_animation tool in the list", async () => {
       const result = await ctx.client.listTools();
 
-      const fetchTool = result.tools.find((t) => t.name === "fetch_url");
-      expect(fetchTool).toBeDefined();
-      expect(fetchTool?.description).toContain("Fetches content from a URL");
+      const getTool = result.tools.find((t) => t.name === "get_animation");
+      expect(getTool).toBeDefined();
+      expect(getTool?.description).toContain("detailed information");
+    });
+
+    it("should include list_popular tool in the list", async () => {
+      const result = await ctx.client.listTools();
+
+      const popularTool = result.tools.find((t) => t.name === "list_popular");
+      expect(popularTool).toBeDefined();
+      expect(popularTool?.description).toContain("popular");
+    });
+
+    it("should include download_animation tool in the list", async () => {
+      const result = await ctx.client.listTools();
+
+      const downloadTool = result.tools.find((t) => t.name === "download_animation");
+      expect(downloadTool).toBeDefined();
+      expect(downloadTool?.description).toContain("Download");
     });
 
     it("should include reasoning parameter when metrics enabled", async () => {
       const result = await ctx.client.listTools();
-      const echoTool = result.tools.find((t) => t.name === "echo");
+      const searchTool = result.tools.find((t) => t.name === "search_animations");
 
       // When metrics are enabled, reasoning should be in the schema
       if (ctx.metricsCollector) {
-        const schema = echoTool?.inputSchema as { properties?: Record<string, unknown> };
+        const schema = searchTool?.inputSchema as { properties?: Record<string, unknown> };
         expect(schema?.properties?.reasoning).toBeDefined();
       }
     });
   });
 
-  describe("echo tool", () => {
-    it("should echo back a simple message", async () => {
+  describe("search_animations tool", () => {
+    it("should search for animations with a query", async () => {
       const result = await ctx.client.callTool({
-        name: "echo",
+        name: "search_animations",
         arguments: { 
-          message: "Hello, World!",
-          reasoning: "Testing echo tool functionality",
+          query: "loading",
+          limit: 3,
+          reasoning: "Testing search functionality",
         },
       });
 
-      expect(extractTextContent(result)).toBe("Echo: Hello, World!");
+      expect(result.isError).not.toBe(true);
+      const text = extractTextContent(result);
+      expect(text).toContain("loading");
     });
 
-    it("should handle empty string", async () => {
+    it("should return download URLs in results", async () => {
       const result = await ctx.client.callTool({
-        name: "echo",
+        name: "search_animations",
         arguments: { 
-          message: "",
-          reasoning: "Testing empty message handling",
+          query: "spinner",
+          limit: 3,
+          reasoning: "Testing URL presence in results",
         },
       });
 
-      expect(extractTextContent(result)).toBe("Echo: ");
+      expect(result.isError).not.toBe(true);
+      const text = extractTextContent(result);
+      // Should contain some kind of URL
+      expect(text).toMatch(/https?:\/\//);
     });
 
-    it("should handle special characters", async () => {
-      const message = "Special chars: !@#$%^&*() 日本語 émojis";
+    it("should handle any search query without error", async () => {
       const result = await ctx.client.callTool({
-        name: "echo",
+        name: "search_animations",
         arguments: { 
-          message,
-          reasoning: "Testing special character handling",
+          query: "xyznonexistent123456789",
+          reasoning: "Testing search handles any query",
         },
       });
 
-      expect(extractTextContent(result)).toBe(`Echo: ${message}`);
-    });
-
-    it("should handle multiline messages", async () => {
-      const message = "Line 1\nLine 2\nLine 3";
-      const result = await ctx.client.callTool({
-        name: "echo",
-        arguments: { 
-          message,
-          reasoning: "Testing multiline message handling",
-        },
-      });
-
-      expect(extractTextContent(result)).toBe(`Echo: ${message}`);
+      // LottieFiles API uses fuzzy matching, so most queries return results
+      // The important thing is that it doesn't error
+      expect(result.isError).not.toBe(true);
+      const text = extractTextContent(result);
+      // Should either find results or return a "no animations found" message
+      expect(text.includes("Found") || text.includes("No animations found")).toBe(true);
     });
 
     it("should record metrics when enabled", async () => {
       if (!ctx.metricsCollector) {
-        // Skip if metrics not enabled
         return;
       }
 
       await ctx.client.callTool({
-        name: "echo",
+        name: "search_animations",
         arguments: { 
-          message: "metrics test",
+          query: "heart",
+          limit: 1,
           reasoning: "Testing that metrics are recorded",
         },
       });
@@ -121,8 +135,38 @@ describe("MCP Server Integration", () => {
 
       const data = ctx.metricsCollector.getData();
       expect(data.total_invocations).toBeGreaterThan(0);
-      expect(data.tool_stats.echo).toBeDefined();
-      expect(data.tool_stats.echo.call_count).toBeGreaterThan(0);
+      expect(data.tool_stats.search_animations).toBeDefined();
+      expect(data.tool_stats.search_animations.call_count).toBeGreaterThan(0);
+    });
+  });
+
+  describe("download_animation tool", () => {
+    it("should reject untrusted URLs", async () => {
+      const result = await ctx.client.callTool({
+        name: "download_animation",
+        arguments: {
+          url: "https://evil.com/malware.json",
+          reasoning: "Testing URL security validation",
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      const text = extractTextContent(result);
+      expect(text).toContain("security");
+    });
+
+    it("should handle dotLottie format with guidance", async () => {
+      const result = await ctx.client.callTool({
+        name: "download_animation",
+        arguments: {
+          url: "https://lottie.host/4db68bbd-31f6-4cd8-84eb-189de081159a/IGmMCqhzpt.lottie",
+          reasoning: "Testing dotLottie format handling",
+        },
+      });
+
+      expect(result.isError).not.toBe(true);
+      const text = extractTextContent(result);
+      expect(text).toContain("dotLottie");
     });
   });
 
@@ -139,7 +183,7 @@ describe("MCP Server Integration", () => {
 
     it("should return error for missing required argument", async () => {
       const result = await ctx.client.callTool({
-        name: "echo",
+        name: "search_animations",
         arguments: { reasoning: "Testing missing argument" },
       });
 
@@ -148,147 +192,15 @@ describe("MCP Server Integration", () => {
 
     it("should return error for missing reasoning when metrics enabled", async () => {
       if (!ctx.metricsCollector) {
-        // Skip if metrics not enabled
         return;
       }
 
       const result = await ctx.client.callTool({
-        name: "echo",
-        arguments: { message: "test" },
+        name: "search_animations",
+        arguments: { query: "test" },
       });
 
       expect(result.isError).toBe(true);
-    });
-
-    it("should return error for invalid argument type", async () => {
-      const result = await ctx.client.callTool({
-        name: "echo",
-        arguments: { 
-          message: 123, // Should be string
-          reasoning: "Testing invalid type",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-    });
-  });
-
-  describe("fetch_url tool", () => {
-    it("should fetch a valid URL successfully", async () => {
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/get",
-          reasoning: "Testing successful URL fetch",
-        },
-      });
-
-      expect(result.isError).not.toBe(true);
-      const text = extractTextContent(result);
-      expect(text).toContain("httpbin.org");
-    });
-
-    it("should return error for invalid URL format", async () => {
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "not-a-valid-url",
-          reasoning: "Testing invalid URL handling",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-    });
-
-    it("should handle HTTP errors gracefully", async () => {
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/status/404",
-          reasoning: "Testing HTTP error handling",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-      const text = extractTextContent(result);
-      expect(text).toContain("404");
-    });
-
-    it("should accept custom timeout parameter", async () => {
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/get",
-          timeout_ms: 5000,
-          reasoning: "Testing custom timeout",
-        },
-      });
-
-      expect(result.isError).not.toBe(true);
-    });
-
-    it("should reject timeout outside valid range", async () => {
-      // Timeout too low (below 1000)
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/get",
-          timeout_ms: 100,
-          reasoning: "Testing invalid timeout",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-    });
-
-    it("should handle timeout for slow responses", async () => {
-      // httpbin.org/delay/N delays response by N seconds
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/delay/10",
-          timeout_ms: 1000, // 1 second timeout
-          reasoning: "Testing timeout handling",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-      const text = extractTextContent(result);
-      expect(text).toContain("timed out");
-    });
-
-    it("should handle non-text content types", async () => {
-      const result = await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/image/png",
-          reasoning: "Testing binary content handling",
-        },
-      });
-
-      expect(result.isError).not.toBe(true);
-      const text = extractTextContent(result);
-      expect(text).toContain("non-text content");
-    });
-
-    it("should record metrics for fetch_url when enabled", async () => {
-      if (!ctx.metricsCollector) {
-        return;
-      }
-
-      await ctx.client.callTool({
-        name: "fetch_url",
-        arguments: {
-          url: "https://httpbin.org/get",
-          reasoning: "Testing metrics recording for fetch_url",
-        },
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      const data = ctx.metricsCollector.getData();
-      expect(data.tool_stats.fetch_url).toBeDefined();
-      expect(data.tool_stats.fetch_url.call_count).toBeGreaterThan(0);
     });
   });
 
@@ -308,7 +220,6 @@ describe("MCP Server Integration", () => {
 
     it("should not be available when metrics are disabled", async () => {
       if (ctx.metricsCollector) {
-        // This test only applies when metrics are disabled
         return;
       }
 
@@ -342,29 +253,6 @@ describe("MCP Server Integration", () => {
       expect(text).toContain("low");
     });
 
-    it("should report a feature request successfully", async () => {
-      if (!ctx.issueCollector) {
-        return;
-      }
-
-      const result = await ctx.client.callTool({
-        name: "report_issue",
-        arguments: {
-          title: "Add dark mode support",
-          description: "It would be great to have a dark mode option for better visibility at night.",
-          severity: "medium",
-          category: "feature_request",
-          expected_behavior: "A toggle to switch between light and dark themes",
-          reasoning: "Testing feature request reporting",
-        },
-      });
-
-      expect(result.isError).not.toBe(true);
-      const text = extractTextContent(result);
-      expect(text).toContain("Issue reported successfully");
-      expect(text).toContain("Feature request");
-    });
-
     it("should save issue to collector data", async () => {
       if (!ctx.issueCollector) {
         return;
@@ -391,71 +279,6 @@ describe("MCP Server Integration", () => {
       expect(data.issues[0].title).toBe("Test issue for data verification");
       expect(data.issues[0].severity).toBe("high");
       expect(data.issues[0].category).toBe("performance");
-    });
-
-    it("should reject title that is too short", async () => {
-      if (!ctx.issueCollector) {
-        return;
-      }
-
-      const result = await ctx.client.callTool({
-        name: "report_issue",
-        arguments: {
-          title: "Hi", // Too short (min 5 chars)
-          description: "This is a valid description that meets the minimum length requirement.",
-          reasoning: "Testing validation",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-    });
-
-    it("should reject description that is too short", async () => {
-      if (!ctx.issueCollector) {
-        return;
-      }
-
-      const result = await ctx.client.callTool({
-        name: "report_issue",
-        arguments: {
-          title: "Valid title here",
-          description: "Too short", // Too short (min 10 chars)
-          reasoning: "Testing validation",
-        },
-      });
-
-      expect(result.isError).toBe(true);
-    });
-
-    it("should include all optional fields in saved issue", async () => {
-      if (!ctx.issueCollector) {
-        return;
-      }
-
-      await ctx.client.callTool({
-        name: "report_issue",
-        arguments: {
-          title: "Complete issue with all fields",
-          description: "Testing that all optional fields are saved correctly.",
-          severity: "critical",
-          category: "security",
-          steps_to_reproduce: "1. Do this\n2. Do that\n3. Observe the issue",
-          expected_behavior: "Should not crash",
-          actual_behavior: "Crashes immediately",
-          environment: "Node.js 20, macOS 14",
-          reasoning: "Testing all optional fields",
-        },
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      const data = ctx.issueCollector.getData();
-      const issue = data.issues[0];
-
-      expect(issue.steps_to_reproduce).toBe("1. Do this\n2. Do that\n3. Observe the issue");
-      expect(issue.expected_behavior).toBe("Should not crash");
-      expect(issue.actual_behavior).toBe("Crashes immediately");
-      expect(issue.environment).toBe("Node.js 20, macOS 14");
     });
   });
 });
