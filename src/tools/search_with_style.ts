@@ -27,9 +27,6 @@ const SEARCH_QUERY = `
           lottieUrl
           jsonUrl
           gifUrl
-          tags {
-            name
-          }
           createdBy {
             username
           }
@@ -48,7 +45,6 @@ interface LottieAnimation {
   lottieUrl: string | null;
   jsonUrl: string | null;
   gifUrl: string | null;
-  tags: Array<{ name: string }> | null;
   createdBy: { username: string } | null;
 }
 
@@ -63,22 +59,13 @@ interface SearchResponse {
 }
 
 /**
- * Count how many style tags an animation has
- */
-function countMatchingTags(animTags: string[], styleTags: string[]): number {
-  const animTagsLower = animTags.map(t => t.toLowerCase());
-  return styleTags.filter(tag => animTagsLower.includes(tag.toLowerCase())).length;
-}
-
-/**
  * Search animations using style tags
  */
 async function searchWithTags(
   styleName: string,
   tags: string[],
   keyword: string | undefined,
-  limit: number,
-  strict: boolean
+  limit: number
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   // Build search query combining tags and optional keyword
   const searchTerms = [...tags];
@@ -95,7 +82,7 @@ async function searchWithTags(
     },
     body: JSON.stringify({
       query: SEARCH_QUERY,
-      variables: { query, limit: strict ? 50 : limit },
+      variables: { query, limit },
     }),
   });
 
@@ -115,30 +102,13 @@ async function searchWithTags(
     };
   }
 
-  let animations = result.data.searchPublicAnimations.edges.map(e => ({
-    ...e.node,
-    matchCount: countMatchingTags(e.node.tags?.map(t => t.name) || [], tags),
-  }));
-
-  // If strict mode, filter to only animations with matching tags
-  if (strict) {
-    animations = animations.filter(a => a.matchCount > 0);
-  }
-
-  // Sort by match count, then by downloads
-  animations.sort((a, b) => {
-    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
-    return b.downloads - a.downloads;
-  });
-
-  // Limit results
-  animations = animations.slice(0, limit);
+  const animations = result.data.searchPublicAnimations.edges.map(e => e.node);
 
   if (animations.length === 0) {
     return {
       content: [{
         type: "text" as const,
-        text: `No animations found matching style "${styleName}" (tags: ${tags.join(", ")})${keyword ? ` with keyword "${keyword}"` : ""}\n\nTry:\n- Using different tags in the style\n- Removing the keyword filter\n- Setting strict=false for more results`,
+        text: `No animations found matching style "${styleName}" (tags: ${tags.join(", ")})${keyword ? ` with keyword "${keyword}"` : ""}\n\nTry:\n- Using different tags in the style\n- Removing the keyword filter\n- Searching with fewer tags`,
       }],
     };
   }
@@ -155,21 +125,8 @@ async function searchWithTags(
   ].filter(Boolean);
 
   animations.forEach((anim, index) => {
-    const animTags = anim.tags?.map(t => t.name) || [];
-    const matchingTags = animTags.filter(t => 
-      tags.some(st => st.toLowerCase() === t.toLowerCase())
-    );
-    
     lines.push(`## ${index + 1}. ${anim.name}`);
     lines.push(`**ID:** ${anim.id}`);
-    
-    if (matchingTags.length > 0) {
-      lines.push(`**Matching Tags:** ${matchingTags.join(", ")}`);
-    }
-    
-    if (animTags.length > 0) {
-      lines.push(`**All Tags:** ${animTags.join(", ")}`);
-    }
     
     if (anim.createdBy) {
       lines.push(`**Creator:** ${anim.createdBy.username}`);
@@ -178,9 +135,10 @@ async function searchWithTags(
     lines.push(`**Downloads:** ${anim.downloads.toLocaleString()}`);
     
     if (anim.lottieUrl) {
-      lines.push(`**URL:** ${anim.lottieUrl}`);
-    } else if (anim.jsonUrl) {
-      lines.push(`**URL:** ${anim.jsonUrl}`);
+      lines.push(`**dotLottie URL:** ${anim.lottieUrl}`);
+    }
+    if (anim.jsonUrl) {
+      lines.push(`**JSON URL:** ${anim.jsonUrl}`);
     }
     
     lines.push("");
@@ -222,8 +180,8 @@ export const register: ToolRegistrar = (server, wrapTool) => {
         .default(false)
         .describe("If true, only return animations that have at least one of the style's tags"),
     },
-    async ({ style, keyword, limit = 10, strict = false }) => {
-      log.info("Searching with style", { style, keyword, limit, strict });
+    async ({ style, keyword, limit = 10 }) => {
+      log.info("Searching with style", { style, keyword, limit });
 
       try {
         const tags = await getStyleTags(style);
@@ -238,7 +196,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           };
         }
 
-        return await searchWithTags(style, tags, keyword, limit, strict);
+        return await searchWithTags(style, tags, keyword, limit);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         log.error("Style search failed", { style, error: errorMessage });
@@ -278,8 +236,8 @@ export const register: ToolRegistrar = (server, wrapTool) => {
         .default(false)
         .describe("If true, only return animations that have at least one of the style's tags"),
     },
-    async ({ folder, keyword, limit = 10, strict = false }) => {
-      log.info("Searching for folder", { folder, keyword, limit, strict });
+    async ({ folder, keyword, limit = 10 }) => {
+      log.info("Searching for folder", { folder, keyword, limit });
 
       try {
         const result = await getStyleForFolder(folder);
@@ -302,7 +260,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           prefix = `*Style inherited from: \`${matchedPath}\`*\n\n`;
         }
 
-        const searchResult = await searchWithTags(styleName, tags, keyword, limit, strict);
+        const searchResult = await searchWithTags(styleName, tags, keyword, limit);
         
         // Prepend inheritance info if applicable
         if (prefix && searchResult.content[0]?.type === "text") {

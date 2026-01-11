@@ -26,9 +26,6 @@ const SEARCH_QUERY = `
           lottieUrl
           jsonUrl
           gifUrl
-          tags {
-            name
-          }
           createdBy {
             username
           }
@@ -57,7 +54,6 @@ interface LottieAnimation {
   lottieUrl: string | null;
   jsonUrl: string | null;
   gifUrl: string | null;
-  tags: Array<{ name: string }> | null;
   createdBy: { username: string } | null;
 }
 
@@ -72,26 +68,10 @@ interface SearchResponse {
 }
 
 /**
- * Check if animation has any of the required tags
- */
-function hasMatchingTags(animTags: string[], requiredTags: string[]): boolean {
-  const animTagsLower = animTags.map(t => t.toLowerCase());
-  return requiredTags.some(tag => animTagsLower.includes(tag.toLowerCase()));
-}
-
-/**
- * Count how many required tags an animation has
- */
-function countMatchingTags(animTags: string[], requiredTags: string[]): number {
-  const animTagsLower = animTags.map(t => t.toLowerCase());
-  return requiredTags.filter(tag => animTagsLower.includes(tag.toLowerCase())).length;
-}
-
-/**
  * Search for Lottie animations by style tags.
  * 
  * This tool helps you find animations with specific visual styles
- * by searching for animations tagged with style descriptors.
+ * by searching for animations using style keywords.
  */
 export const register: ToolRegistrar = (server, wrapTool) => {
   const tool = wrapTool(
@@ -124,6 +104,9 @@ export const register: ToolRegistrar = (server, wrapTool) => {
     async ({ tags, keyword, limit = 10, strict = false }) => {
       log.info("Searching by tags", { tags, keyword, limit, strict });
 
+      // Note: strict mode is ignored since API doesn't return tag metadata
+      // We search using tags as keywords instead
+
       try {
         // Build search query combining tags and optional keyword
         const searchTerms = [...tags];
@@ -140,7 +123,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           },
           body: JSON.stringify({
             query: SEARCH_QUERY,
-            variables: { query, limit: strict ? 50 : limit }, // Fetch more if filtering
+            variables: { query, limit },
           }),
         });
 
@@ -160,31 +143,9 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           };
         }
 
-        let animations = result.data.searchPublicAnimations.edges.map(e => ({
-          ...e.node,
-          matchCount: countMatchingTags(e.node.tags?.map(t => t.name) || [], tags),
-        }));
-
-        // If strict mode, filter to only animations with matching tags
-        if (strict) {
-          animations = animations.filter(a => a.matchCount > 0);
-        }
-
-        // Sort by match count, then by downloads
-        animations.sort((a, b) => {
-          if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
-          return b.downloads - a.downloads;
-        });
-
-        // Limit results
-        animations = animations.slice(0, limit);
+        const animations = result.data.searchPublicAnimations.edges.map(e => e.node);
 
         if (animations.length === 0) {
-          const suggestions = [
-            ...STYLE_TAGS.visual.slice(0, 4),
-            ...STYLE_TAGS.type.slice(0, 3),
-          ].join(", ");
-
           return {
             content: [{
               type: "text" as const,
@@ -202,21 +163,9 @@ export const register: ToolRegistrar = (server, wrapTool) => {
         ];
 
         animations.forEach((anim, index) => {
-          const animTags = anim.tags?.map(t => t.name) || [];
-          const matchingTags = animTags.filter(t => 
-            tags.some(st => st.toLowerCase() === t.toLowerCase())
-          );
-          
           lines.push(`## ${index + 1}. ${anim.name}`);
           lines.push(`**ID:** ${anim.id}`);
-          
-          if (matchingTags.length > 0) {
-            lines.push(`**Matching Tags:** ${matchingTags.join(", ")}`);
-          }
-          
-          if (animTags.length > 0) {
-            lines.push(`**All Tags:** ${animTags.join(", ")}`);
-          }
+          lines.push(`**Search tags:** ${tags.join(", ")}`);
           
           if (anim.createdBy) {
             lines.push(`**Creator:** ${anim.createdBy.username}`);
@@ -225,9 +174,10 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           lines.push(`**Downloads:** ${anim.downloads.toLocaleString()}`);
           
           if (anim.lottieUrl) {
-            lines.push(`**URL:** ${anim.lottieUrl}`);
-          } else if (anim.jsonUrl) {
-            lines.push(`**URL:** ${anim.jsonUrl}`);
+            lines.push(`**dotLottie URL:** ${anim.lottieUrl}`);
+          }
+          if (anim.jsonUrl) {
+            lines.push(`**JSON URL:** ${anim.jsonUrl}`);
           }
           
           lines.push("");

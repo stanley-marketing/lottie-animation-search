@@ -1,6 +1,6 @@
 {
   "name": "@stanley-marketing/lottie-animation-search",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP Server for searching and downloading free Lottie animations from LottieFiles",
   "type": "module",
   "main": "dist/index.js",

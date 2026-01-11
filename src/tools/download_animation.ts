@@ -37,6 +37,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
       const trustedDomains = [
         "lottie.host",
         "assets.lottiefiles.com",
+        "assets-v2.lottiefiles.com",
         "assets1.lottiefiles.com",
         "assets2.lottiefiles.com",
         "assets3.lottiefiles.com",

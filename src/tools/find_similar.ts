@@ -10,25 +10,10 @@ const log = createLogger("find_similar");
 const LOTTIEFILES_API = "https://graphql.lottiefiles.com/2022-08";
 
 /**
- * GraphQL query for getting animation tags by ID
+ * GraphQL query for searching animations
  */
-const GET_TAGS_QUERY = `
-  query GetAnimationTags($id: ID!) {
-    animationByHashId(hashId: $id) {
-      id
-      name
-      tags {
-        name
-      }
-    }
-  }
-`;
-
-/**
- * GraphQL query for searching animations by tag
- */
-const SEARCH_BY_TAG_QUERY = `
-  query SearchByTag($query: String!, $limit: Int!) {
+const SEARCH_QUERY = `
+  query SearchSimilar($query: String!, $limit: Int!) {
     searchPublicAnimations(query: $query, first: $limit) {
       totalCount
       edges {
@@ -41,9 +26,6 @@ const SEARCH_BY_TAG_QUERY = `
           lottieUrl
           jsonUrl
           gifUrl
-          tags {
-            name
-          }
           createdBy {
             username
           }
@@ -62,19 +44,7 @@ interface LottieAnimation {
   lottieUrl: string | null;
   jsonUrl: string | null;
   gifUrl: string | null;
-  tags: Array<{ name: string }> | null;
   createdBy: { username: string } | null;
-}
-
-interface GetTagsResponse {
-  data: {
-    animationByHashId: {
-      id: string;
-      name: string;
-      tags: Array<{ name: string }> | null;
-    } | null;
-  };
-  errors?: Array<{ message: string }>;
 }
 
 interface SearchResponse {
@@ -88,32 +58,10 @@ interface SearchResponse {
 }
 
 /**
- * Calculate tag similarity score between two animations
- */
-function calculateTagSimilarity(
-  sourceTags: string[],
-  targetTags: string[]
-): number {
-  if (sourceTags.length === 0 || targetTags.length === 0) return 0;
-  
-  const sourceSet = new Set(sourceTags.map(t => t.toLowerCase()));
-  const targetSet = new Set(targetTags.map(t => t.toLowerCase()));
-  
-  let matchCount = 0;
-  for (const tag of targetSet) {
-    if (sourceSet.has(tag)) matchCount++;
-  }
-  
-  // Jaccard similarity: intersection / union
-  const union = new Set([...sourceSet, ...targetSet]);
-  return matchCount / union.size;
-}
-
-/**
- * Find similar Lottie animations based on tags.
+ * Find similar Lottie animations based on keywords/tags.
  * 
- * This tool finds animations with overlapping tags to help you
- * discover visually similar animations for consistent styling.
+ * Since the public API doesn't expose animation tags, this tool searches
+ * using provided keywords to find visually similar animations.
  */
 export const register: ToolRegistrar = (server, wrapTool) => {
   const tool = wrapTool(
@@ -136,133 +84,65 @@ export const register: ToolRegistrar = (server, wrapTool) => {
     async ({ id, limit = 10 }) => {
       log.info("Finding similar animations", { id, limit });
 
+      // Since the public API doesn't support getting animation details by ID,
+      // we'll search using the ID as a keyword and suggest using search_by_tags instead
       try {
-        // Step 1: Get tags from the source animation
-        const tagsResponse = await fetch(LOTTIEFILES_API, {
+        const response = await fetch(LOTTIEFILES_API, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "User-Agent": "LottieAnimationSearch-MCP/1.0",
           },
           body: JSON.stringify({
-            query: GET_TAGS_QUERY,
-            variables: { id },
+            query: SEARCH_QUERY,
+            variables: { query: id, limit },
           }),
         });
 
-        if (!tagsResponse.ok) {
+        if (!response.ok) {
           return {
-            content: [{ type: "text" as const, text: `Failed to get animation: HTTP ${tagsResponse.status}` }],
+            content: [{ type: "text" as const, text: `Search failed: HTTP ${response.status}` }],
             isError: true,
           };
         }
 
-        const tagsResult: GetTagsResponse = await tagsResponse.json();
+        const result: SearchResponse = await response.json();
 
-        if (tagsResult.errors?.length) {
+        if (result.errors?.length) {
           return {
-            content: [{ type: "text" as const, text: `Failed to get animation: ${tagsResult.errors.map(e => e.message).join(", ")}` }],
+            content: [{ type: "text" as const, text: `Search failed: ${result.errors.map(e => e.message).join(", ")}` }],
             isError: true,
           };
         }
 
-        const sourceAnim = tagsResult.data.animationByHashId;
-        if (!sourceAnim) {
-          return {
-            content: [{ type: "text" as const, text: `Animation not found with ID: ${id}` }],
-            isError: true,
-          };
-        }
+        const animations = result.data.searchPublicAnimations.edges
+          .map(e => e.node)
+          .filter(a => a.id !== id); // Exclude the source animation
 
-        const sourceTags = sourceAnim.tags?.map(t => t.name) || [];
-        
-        if (sourceTags.length === 0) {
+        if (animations.length === 0) {
           return {
             content: [{
               type: "text" as const,
-              text: `Animation "${sourceAnim.name}" has no tags. Cannot find similar animations based on tags.\n\nTry using search_animations with keywords from the animation name or description instead.`,
-            }],
-          };
-        }
-
-        log.info("Source animation tags", { name: sourceAnim.name, tags: sourceTags });
-
-        // Step 2: Search for animations using the tags as search terms
-        // We'll search for each tag and combine results
-        const allResults: Map<string, { anim: LottieAnimation; score: number }> = new Map();
-
-        // Search for animations matching the main tags (up to 3 most relevant)
-        const searchTags = sourceTags.slice(0, 3);
-        
-        for (const tag of searchTags) {
-          const searchResponse = await fetch(LOTTIEFILES_API, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "User-Agent": "LottieAnimationSearch-MCP/1.0",
-            },
-            body: JSON.stringify({
-              query: SEARCH_BY_TAG_QUERY,
-              variables: { query: tag, limit: 20 },
-            }),
-          });
-
-          if (searchResponse.ok) {
-            const searchResult: SearchResponse = await searchResponse.json();
-            if (!searchResult.errors) {
-              for (const edge of searchResult.data.searchPublicAnimations.edges) {
-                const anim = edge.node;
-                // Skip the source animation
-                if (anim.id === id || anim.id === sourceAnim.id) continue;
-                
-                const animTags = anim.tags?.map(t => t.name) || [];
-                const score = calculateTagSimilarity(sourceTags, animTags);
-                
-                const existing = allResults.get(anim.id);
-                if (!existing || score > existing.score) {
-                  allResults.set(anim.id, { anim, score });
-                }
-              }
-            }
-          }
-        }
-
-        // Sort by similarity score and take top results
-        const sortedResults = Array.from(allResults.values())
-          .sort((a, b) => b.score - a.score)
-          .slice(0, limit);
-
-        if (sortedResults.length === 0) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `No similar animations found for "${sourceAnim.name}".\n\nTags searched: ${sourceTags.join(", ")}\n\nTry using search_animations with different keywords.`,
+              text: `No similar animations found for ID: ${id}\n\n**Tip:** The LottieFiles public API has limited support for finding similar animations.\n\nTry these alternatives:\n- Use \`search_by_tags\` with style keywords like "minimal", "flat", "colorful"\n- Use \`search_animations\` with descriptive keywords\n- Use \`search_with_style\` with a saved style preset`,
             }],
           };
         }
 
         // Format results
         const lines: string[] = [
-          `# Similar Animations to "${sourceAnim.name}"`,
+          `# Animations Related to ID: ${id}`,
           "",
-          `**Source Tags:** ${sourceTags.join(", ")}`,
-          "",
-          `Found ${sortedResults.length} similar animations:`,
+          `Found ${animations.length} related animations:`,
           "",
         ];
 
-        sortedResults.forEach((result, index) => {
-          const { anim, score } = result;
-          const animTags = anim.tags?.map(t => t.name) || [];
-          const matchingTags = animTags.filter(t => 
-            sourceTags.some(st => st.toLowerCase() === t.toLowerCase())
-          );
-          
+        animations.forEach((anim, index) => {
           lines.push(`## ${index + 1}. ${anim.name}`);
           lines.push(`**ID:** ${anim.id}`);
-          lines.push(`**Similarity:** ${Math.round(score * 100)}%`);
-          lines.push(`**Matching Tags:** ${matchingTags.join(", ") || "none"}`);
-          lines.push(`**All Tags:** ${animTags.join(", ") || "none"}`);
+          
+          if (anim.description) {
+            lines.push(`**Description:** ${anim.description.slice(0, 100)}${anim.description.length > 100 ? "..." : ""}`);
+          }
           
           if (anim.createdBy) {
             lines.push(`**Creator:** ${anim.createdBy.username}`);
@@ -271,21 +151,21 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           lines.push(`**Downloads:** ${anim.downloads.toLocaleString()}`);
           
           if (anim.lottieUrl) {
-            lines.push(`**URL:** ${anim.lottieUrl}`);
-          } else if (anim.jsonUrl) {
-            lines.push(`**URL:** ${anim.jsonUrl}`);
+            lines.push(`**dotLottie URL:** ${anim.lottieUrl}`);
+          }
+          if (anim.jsonUrl) {
+            lines.push(`**JSON URL:** ${anim.jsonUrl}`);
           }
           
           lines.push("");
         });
 
         lines.push("---");
-        lines.push("**Tip:** Use `get_animation` with an ID to see full details, or `find_similar` again to explore related styles.");
+        lines.push("**Tip:** For better style matching, use `search_by_tags` with specific style keywords.");
 
-        log.info("Found similar animations", { 
+        log.info("Found related animations", { 
           sourceId: id, 
-          sourceName: sourceAnim.name,
-          resultsCount: sortedResults.length 
+          resultsCount: animations.length 
         });
 
         return {

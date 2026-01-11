@@ -10,31 +10,28 @@ const log = createLogger("get_animation");
 const LOTTIEFILES_API = "https://graphql.lottiefiles.com/2022-08";
 
 /**
- * GraphQL query for getting animation details by ID
+ * GraphQL query for searching animations by ID
  */
-const GET_ANIMATION_QUERY = `
-  query GetAnimation($id: ID!) {
-    animationByHashId(hashId: $id) {
-      id
-      hashId
-      slug
-      name
-      description
-      likesCount
-      downloads
-      gifUrl
-      lottieUrl
-      jsonUrl
-      createdAt
-      updatedAt
-      bgColor
-      speed
-      createdBy {
-        username
-        avatarUrl
-      }
-      tags {
-        name
+const SEARCH_QUERY = `
+  query SearchById($query: String!, $limit: Int!) {
+    searchPublicAnimations(query: $query, first: $limit) {
+      edges {
+        node {
+          id
+          slug
+          name
+          description
+          likesCount
+          downloads
+          gifUrl
+          lottieUrl
+          jsonUrl
+          createdAt
+          createdBy {
+            username
+            avatarUrl
+          }
+        }
       }
     }
   }
@@ -42,7 +39,6 @@ const GET_ANIMATION_QUERY = `
 
 interface AnimationDetails {
   id: string;
-  hashId: string;
   slug: string;
   name: string;
   description: string | null;
@@ -52,19 +48,17 @@ interface AnimationDetails {
   lottieUrl: string | null;
   jsonUrl: string | null;
   createdAt: string;
-  updatedAt: string;
-  bgColor: string | null;
-  speed: number | null;
   createdBy: {
     username: string;
     avatarUrl: string | null;
   } | null;
-  tags: Array<{ name: string }> | null;
 }
 
-interface GetAnimationResponse {
+interface SearchResponse {
   data: {
-    animationByHashId: AnimationDetails | null;
+    searchPublicAnimations: {
+      edges: Array<{ node: AnimationDetails }>;
+    };
   };
   errors?: Array<{ message: string }>;
 }
@@ -88,6 +82,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
       log.info("Getting animation details", { id });
 
       try {
+        // Search for the animation using its ID
         const response = await fetch(LOTTIEFILES_API, {
           method: "POST",
           headers: {
@@ -95,8 +90,8 @@ export const register: ToolRegistrar = (server, wrapTool) => {
             "User-Agent": "LottieAnimationSearch-MCP/1.0",
           },
           body: JSON.stringify({
-            query: GET_ANIMATION_QUERY,
-            variables: { id },
+            query: SEARCH_QUERY,
+            variables: { query: id, limit: 10 },
           }),
         });
 
@@ -113,7 +108,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           };
         }
 
-        const result: GetAnimationResponse = await response.json();
+        const result: SearchResponse = await response.json();
 
         if (result.errors && result.errors.length > 0) {
           log.error("GraphQL errors", { errors: result.errors });
@@ -128,14 +123,31 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           };
         }
 
-        const anim = result.data.animationByHashId;
+        // Find the exact animation by ID
+        const anim = result.data.searchPublicAnimations.edges
+          .map(e => e.node)
+          .find(a => a.id === id || a.id.toString() === id);
 
         if (!anim) {
+          // If not found by exact ID, return the first result as a suggestion
+          const firstResult = result.data.searchPublicAnimations.edges[0]?.node;
+          if (firstResult) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Animation with exact ID "${id}" not found.\n\n**Did you mean "${firstResult.name}" (ID: ${firstResult.id})?**\n\nUse the ID from search results for best results.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Animation not found with ID: ${id}`,
+                text: `Animation not found with ID: ${id}\n\nUse search_animations to find animations first.`,
               },
             ],
             isError: true,
@@ -146,7 +158,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
         const lines: string[] = [
           `# ${anim.name}`,
           "",
-          `**ID:** ${anim.hashId || anim.id}`,
+          `**ID:** ${anim.id}`,
         ];
 
         if (anim.description) {
@@ -157,26 +169,11 @@ export const register: ToolRegistrar = (server, wrapTool) => {
           lines.push(`**Creator:** ${anim.createdBy.username}`);
         }
 
-        if (anim.tags && anim.tags.length > 0) {
-          lines.push("");
-          lines.push("## Style Tags");
-          lines.push(anim.tags.map((t) => `\`${t.name}\``).join(" "));
-          lines.push("");
-          lines.push(`*Tip: Use \`find_similar\` with this ID to find animations with matching tags*`);
-        }
-
         lines.push("");
         lines.push("## Stats");
         lines.push(`- Downloads: ${anim.downloads.toLocaleString()}`);
         lines.push(`- Likes: ${anim.likesCount.toLocaleString()}`);
         lines.push(`- Created: ${new Date(anim.createdAt).toLocaleDateString()}`);
-
-        if (anim.bgColor) {
-          lines.push(`- Background Color: ${anim.bgColor}`);
-        }
-        if (anim.speed) {
-          lines.push(`- Speed: ${anim.speed}x`);
-        }
 
         lines.push("");
         lines.push("## Download URLs");
@@ -202,7 +199,7 @@ export const register: ToolRegistrar = (server, wrapTool) => {
         lines.push("---");
         lines.push("**License:** Lottie Simple License (free for commercial use, no attribution required)");
 
-        log.info("Animation details retrieved", { id: anim.hashId, name: anim.name });
+        log.info("Animation details retrieved", { id: anim.id, name: anim.name });
 
         return {
           content: [
